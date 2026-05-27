@@ -34,11 +34,15 @@ class MagicMute:
         keyboard_name: str,
         mic_name: str,
         unmute_delay: float = 1.0,
+        retry_interval: float = 60.0,
+        no_retry: bool = False,
         verbose: bool = False,
     ):
         self.keyboard_name = keyboard_name
         self.mic_name = mic_name
         self.unmute_delay = unmute_delay
+        self.retry_interval = retry_interval
+        self.no_retry = no_retry
         self.verbose = verbose
 
         self.device: Optional[evdev.InputDevice] = None
@@ -50,9 +54,11 @@ class MagicMute:
         self.unmute_timer: Optional[threading.Timer] = None
         self.timer_lock = threading.Lock()
 
-    def log(self, message: str):
-        """Print message if verbose mode is enabled"""
-        if self.verbose:
+        self.devices_found = False
+
+    def log(self, message: str, force: bool = False):
+        """Print message if verbose mode is enabled or force is True"""
+        if self.verbose or force:
             print(f"[{time.strftime('%H:%M:%S')}] {message}")
 
     def _find_keyboard_device(self) -> Optional[str]:
@@ -124,46 +130,67 @@ class MagicMute:
             except (PermissionError, OSError):
                 continue
 
-    def setup(self) -> bool:
+    def setup(self, show_details: bool = True) -> bool:
         """Initialize keyboard device and microphone connection"""
+        # Clean up any existing connections first
+        if self.pulse is not None:
+            try:
+                self.pulse.close()
+            except:
+                pass
+            self.pulse = None
+            self.mic_index = None
+
+        if self.device is not None:
+            try:
+                self.device.close()
+            except:
+                pass
+            self.device = None
+            self.device_path = None
+
         # Find keyboard device by name
         self.device_path = self._find_keyboard_device()
         if self.device_path is None:
-            print(f"Error: Cannot find keyboard device matching '{self.keyboard_name}'")
-            print()
-            self._list_keyboard_devices()
+            if show_details:
+                print(f"Error: Cannot find keyboard device matching '{self.keyboard_name}'")
+                print()
+                self._list_keyboard_devices()
             return False
 
         # Setup keyboard device
         try:
             self.device = evdev.InputDevice(self.device_path)
-            self.log(f"Monitoring keyboard: {self.device.name} ({self.device_path})")
+            self.log(f"Monitoring keyboard: {self.device.name} ({self.device_path})", force=True)
         except (FileNotFoundError, PermissionError) as e:
-            print(f"Error: Cannot access keyboard device {self.device_path}: {e}")
-            print("Make sure you have permission to read it.")
+            if show_details:
+                print(f"Error: Cannot access keyboard device {self.device_path}: {e}")
+                print("Make sure you have permission to read it.")
             return False
 
-        # Setup PulseAudio/PipeWire connection
+        # Setup PulseAudio/PipeWire connection (fresh connection each time)
         try:
             self.pulse = pulsectl.Pulse('magic-mute')
         except Exception as e:
-            print(f"Error: Cannot connect to PulseAudio/PipeWire: {e}")
+            if show_details:
+                print(f"Error: Cannot connect to PulseAudio/PipeWire: {e}")
             return False
 
-        # Find microphone source
+        # Find microphone source (index may have changed if device was reconnected)
         self.mic_index = self._find_mic_source()
         if self.mic_index is None:
-            print(f"Error: Cannot find microphone source matching '{self.mic_name}'")
-            print("\nAvailable sources:")
-            self._list_sources()
+            if show_details:
+                print(f"Error: Cannot find microphone source matching '{self.mic_name}'")
+                print("\nAvailable sources:")
+                self._list_sources()
             return False
 
         # Find the source object by its index for logging
         source = next((s for s in self.pulse.source_list() if s.index == self.mic_index), None)
         if source:
-            self.log(f"Controlling microphone: {source.description} ({source.name})")
+            self.log(f"Controlling microphone: {source.description} ({source.name})", force=True)
         else:
-            self.log(f"Controlling microphone index: {self.mic_index}")
+            self.log(f"Controlling microphone index: {self.mic_index}", force=True)
 
         return True
 
@@ -202,25 +229,31 @@ class MagicMute:
                 print(f"    Muted: {bool(source.mute)}")
                 print()
 
-    def mute_mic(self):
-        """Mute the microphone"""
+    def mute_mic(self) -> bool:
+        """Mute the microphone. Returns False if operation failed (device gone)."""
         if not self.is_muted:
             try:
                 self.pulse.source_mute(self.mic_index, 1)
                 self.is_muted = True
                 self.log("🔇 Microphone MUTED")
+                return True
             except Exception as e:
-                print(f"Error muting microphone: {e}")
+                self.log(f"Error muting microphone: {e}", force=True)
+                return False
+        return True
 
-    def unmute_mic(self):
-        """Unmute the microphone"""
+    def unmute_mic(self) -> bool:
+        """Unmute the microphone. Returns False if operation failed (device gone)."""
         if self.is_muted:
             try:
                 self.pulse.source_mute(self.mic_index, 0)
                 self.is_muted = False
                 self.log("🔊 Microphone UNMUTED")
+                return True
             except Exception as e:
-                print(f"Error unmuting microphone: {e}")
+                self.log(f"Error unmuting microphone: {e}", force=True)
+                return False
+        return True
 
     def schedule_unmute(self):
         """Schedule microphone unmute after delay"""
@@ -230,6 +263,7 @@ class MagicMute:
                 self.unmute_timer.cancel()
 
             # Schedule new timer
+            # Note: If unmute fails, we'll catch it on the next mute attempt
             self.unmute_timer = threading.Timer(self.unmute_delay, self.unmute_mic)
             self.unmute_timer.start()
 
@@ -251,15 +285,75 @@ class MagicMute:
                         self.log(f"Key pressed: {key_event.keycode}")
 
                         # Mute microphone immediately
-                        self.mute_mic()
+                        if not self.mute_mic():
+                            # Microphone operation failed - device disconnected
+                            self.log("Microphone disconnected", force=True)
+                            return False  # Signal to retry
 
                         # Schedule unmute
                         self.schedule_unmute()
 
+        except (OSError, IOError) as e:
+            # Device disconnected while running
+            self.log(f"Device disconnected: {e}", force=True)
+            return False  # Signal to retry
+        except KeyboardInterrupt:
+            print("\n\nStopping Magic Mute...")
+            return True  # Signal clean exit
+        finally:
+            self.cleanup()
+
+    def run_with_retry(self):
+        """Main loop with device retry logic"""
+        print("Magic Mute started")
+        print("Press Ctrl+C to stop")
+        print()
+
+        first_attempt = True
+
+        try:
+            while True:
+                # Try to setup devices
+                if self.setup(show_details=first_attempt):
+                    self.devices_found = True
+
+                    # Run monitoring loop
+                    clean_exit = self.run()
+
+                    if clean_exit:
+                        # User pressed Ctrl+C, exit normally
+                        break
+                    else:
+                        # Device disconnected, go back to retry mode
+                        self.devices_found = False
+                        self.log("Devices disconnected, waiting for reconnection...", force=True)
+                        first_attempt = False
+
+                        if self.no_retry:
+                            print("Device disconnected and --no-retry specified, exiting")
+                            break
+
+                        time.sleep(self.retry_interval)
+                        self.log("Retrying device detection...", force=False)
+                else:
+                    # Devices not found
+                    if first_attempt:
+                        print(f"Waiting for keyboard '{self.keyboard_name}' and microphone '{self.mic_name}'...")
+                        first_attempt = False
+
+                    if self.no_retry:
+                        print("Devices not found and --no-retry specified, exiting")
+                        break
+
+                    # Sleep and retry
+                    time.sleep(self.retry_interval)
+                    self.log("Retrying device detection...", force=False)
+
         except KeyboardInterrupt:
             print("\n\nStopping Magic Mute...")
         finally:
-            self.cleanup()
+            if self.devices_found:
+                self.cleanup()
 
     def cleanup(self):
         """Clean up resources"""
@@ -393,6 +487,9 @@ Examples:
 
   # Run with custom unmute delay
   %(prog)s -k "HID 04d9" -m "Headset" -d 3.0 -v
+
+  # Run with no retry (exit if devices not found)
+  %(prog)s -k "Model M" -m "Headset" --no-retry
         """
     )
 
@@ -425,6 +522,19 @@ Examples:
         type=float,
         default=1.0,
         help='Seconds to wait before unmuting after last keystroke (default: 1.0)'
+    )
+
+    parser.add_argument(
+        '-r', '--retry-interval',
+        type=float,
+        default=60.0,
+        help='Seconds to wait between retries when devices are not found (default: 60.0)'
+    )
+
+    parser.add_argument(
+        '--no-retry',
+        action='store_true',
+        help='Exit immediately if devices are not found instead of retrying'
     )
 
     parser.add_argument(
@@ -472,13 +582,12 @@ Examples:
         keyboard_name=args.keyboard,
         mic_name=args.mic,
         unmute_delay=args.delay,
+        retry_interval=args.retry_interval,
+        no_retry=args.no_retry,
         verbose=args.verbose
     )
 
-    if not magic_mute.setup():
-        return 1
-
-    magic_mute.run()
+    magic_mute.run_with_retry()
     return 0
 
 
