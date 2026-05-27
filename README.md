@@ -106,12 +106,14 @@ See what's happening in real-time:
 ## Command-Line Options
 
 ```
--k, --keyboard NAME    Keyboard device name or substring (e.g., "Model M", "HID 04d9")
--m, --mic NAME         Microphone source name or substring (e.g., "Headset")
--d, --delay SECONDS    Seconds to wait before unmuting (default: 1.0)
--v, --verbose          Enable verbose output
---list-keyboards       List all available keyboard devices
---list-mics            List all available microphone sources
+-k, --keyboard NAME       Keyboard device name or substring (e.g., "Model M", "HID 04d9")
+-m, --mic NAME            Microphone source name or substring (e.g., "Headset")
+-d, --delay SECONDS       Seconds to wait before unmuting (default: 1.0)
+-r, --retry-interval SEC  Seconds between retries when devices not found (default: 60.0)
+--no-retry                Exit if devices not found instead of retrying
+-v, --verbose             Enable verbose output
+--list-keyboards          List all available keyboard devices
+--list-mics               List all available microphone sources
 ```
 
 ## Device Permissions
@@ -184,24 +186,29 @@ journalctl --user -u magic-mute.service -f
 
 1. **Keyboard Discovery**: Searches for your keyboard by name across all input devices, so it works even if the device path changes between reboots
 
-2. **Keyboard Monitoring**: Uses the `evdev` library to read events directly from the keyboard device at the kernel level (`/dev/input/eventX`)
+2. **Device Retry Logic**: If devices aren't found (e.g., laptop undocked), waits and retries every 60 seconds instead of failing. Perfect for dock/undock scenarios - no systemd restart spam!
 
-3. **Microphone Control**: Uses `pulsectl` to interface with PipeWire/PulseAudio's API for muting/unmuting audio sources
+3. **Keyboard Monitoring**: Uses the `evdev` library to read events directly from the keyboard device at the kernel level (`/dev/input/eventX`)
 
-4. **Smart Timing**: When a key is pressed:
+4. **Microphone Control**: Uses `pulsectl` to interface with PipeWire/PulseAudio's API for muting/unmuting audio sources
+
+5. **Smart Timing**: When a key is pressed:
    - Immediately mutes the microphone
    - Starts/resets a countdown timer
    - When the timer expires (no keys pressed for N seconds), unmutes the microphone
 
-5. **Desktop Environment Agnostic**: Works on Wayland, Xorg, or even headless systems because it operates at the kernel device level
+6. **Desktop Environment Agnostic**: Works on Wayland, Xorg, or even headless systems because it operates at the kernel device level
 
 ## Troubleshooting
 
-### "Cannot find keyboard device"
+### "Waiting for keyboard..." / Devices not found
+- By default, the script will retry every 60 seconds if devices aren't found
+- This is normal when your laptop is undocked or devices are unplugged
+- The script will automatically start working when you reconnect the devices
+- Use `--no-retry` if you want it to exit immediately instead of waiting
 - Check available keyboards with `--list-keyboards`
 - Verify permissions (see Device Permissions section)
 - Make sure you're using a substring that uniquely identifies your keyboard
-- Try using a more specific part of the name (e.g., "04d9" instead of just "HID")
 
 ### "Cannot find microphone source"
 - Check available sources with `--list-mics`
