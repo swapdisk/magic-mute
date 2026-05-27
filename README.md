@@ -155,6 +155,7 @@ ExecStart=INSTALL_PATH/magic_mute.py \
   --delay 1.0
 Restart=on-failure
 RestartSec=5
+KillSignal=SIGINT
 
 [Install]
 WantedBy=default.target
