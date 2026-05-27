@@ -30,9 +30,9 @@ Works directly with kernel input devices and PipeWire/PulseAudio, making it desk
 
 ## Installation
 
-1. Clone or download this repository:
+1. Clone or download this repository to your desired location:
 ```bash
-cd ~/claude/magic-mute
+cd INSTALL_PATH
 ```
 
 2. Install Python dependencies:
@@ -54,7 +54,7 @@ List all available keyboard devices:
 ./magic_mute.py --list-keyboards
 ```
 
-Look for your mechanical keyboard (e.g., "IBM Model M") and note its device path (e.g., `/dev/input/event5`).
+Look for your mechanical keyboard (e.g., "IBM Model M", "HID 04d9:1400") and note its name. You can use the full name or any substring that uniquely identifies it.
 
 ### Find Your Microphone
 
@@ -70,33 +70,33 @@ Look for your headset or desired microphone and note its name or description.
 ### Basic Usage
 
 ```bash
-./magic_mute.py --keyboard /dev/input/event5 --mic "Headset"
+./magic_mute.py --keyboard "Model M" --mic "Headset"
 ```
 
 Or using short options:
 ```bash
-./magic_mute.py -k /dev/input/event5 -m "Headset"
+./magic_mute.py -k "HID 04d9" -m "Headset"
 ```
 
 ### With Custom Unmute Delay
 
 Wait 3 seconds after typing stops before unmuting:
 ```bash
-./magic_mute.py -k /dev/input/event5 -m "Headset" -d 3.0
+./magic_mute.py -k "Model M" -m "Headset" -d 3.0
 ```
 
 ### Verbose Mode
 
 See what's happening in real-time:
 ```bash
-./magic_mute.py -k /dev/input/event5 -m "Headset" -v
+./magic_mute.py -k "Model M" -m "Headset" -v
 ```
 
 ### Complete Example
 
 ```bash
 ./magic_mute.py \
-  --keyboard /dev/input/event5 \
+  --keyboard "Model M" \
   --mic "USB Audio Device Mono" \
   --delay 2.5 \
   --verbose
@@ -105,9 +105,9 @@ See what's happening in real-time:
 ## Command-Line Options
 
 ```
--k, --keyboard PATH    Path to keyboard device (e.g., /dev/input/event5)
--m, --mic NAME         Microphone source name or substring
--d, --delay SECONDS    Seconds to wait before unmuting (default: 2.0)
+-k, --keyboard NAME    Keyboard device name or substring (e.g., "Model M", "HID 04d9")
+-m, --mic NAME         Microphone source name or substring (e.g., "Headset")
+-d, --delay SECONDS    Seconds to wait before unmuting (default: 1.0)
 -v, --verbose          Enable verbose output
 --list-keyboards       List all available keyboard devices
 --list-mics           List all available microphone sources
@@ -148,7 +148,7 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
 
-**Note:** Even with this setup, you may not be able to run the script manually from a Gnome desktop session due to the security feature mentioned above. Use the systemd system service approach instead.
+**Note:** Even with this setup, you may not be able to run the script manually from a Gnome desktop session due to the security feature mentioned above. The script will automatically re-execute itself via `sg input` when needed to gain the necessary permissions.
 
 ### Option 2: Run as Root (Not Recommended for Production)
 
@@ -159,55 +159,9 @@ sudo ./magic_mute.py -k /dev/input/event5 -m "Headset"
 
 ## Running on Startup
 
-### Using systemd System Service (Recommended for Gnome Wayland)
+### Using systemd User Service (Recommended)
 
-Due to Gnome's security feature that drops the `input` group from desktop sessions, the recommended approach is to use a **system service** that explicitly grants the `input` group.
-
-Create `/etc/systemd/system/magic-mute.service`:
-
-```ini
-[Unit]
-Description=Magic Mute - Auto-mute mic while typing
-After=sound.target
-
-[Service]
-Type=simple
-User=YOUR_USERNAME
-Group=input
-SupplementaryGroups=input
-ExecStart=/home/YOUR_USERNAME/claude/magic-mute/magic_mute.py \
-  --keyboard /dev/input/event5 \
-  --mic "Headset" \
-  --delay 2.0
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Replace `YOUR_USERNAME` and adjust the keyboard/mic parameters.
-
-Enable and start:
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable magic-mute.service
-sudo systemctl start magic-mute.service
-```
-
-Check status:
-```bash
-sudo systemctl status magic-mute.service
-```
-
-View logs:
-```bash
-sudo journalctl -u magic-mute.service -f
-```
-
-### Using systemd User Service (X11 or Non-Gnome Desktops)
-
-**Note:** This approach will NOT work on Gnome Wayland due to the `input` group being dropped from desktop sessions. Use the system service above instead.
+The script automatically handles the `input` group permission issue by re-executing itself via `sg input` when needed, so it works as a regular user service on all desktop environments including Gnome Wayland.
 
 Create `~/.config/systemd/user/magic-mute.service`:
 
@@ -218,10 +172,10 @@ After=pipewire.service
 
 [Service]
 Type=simple
-ExecStart=/home/YOUR_USERNAME/claude/magic-mute/magic_mute.py \
-  --keyboard /dev/input/event5 \
+ExecStart=INSTALL_PATH/magic_mute.py \
+  --keyboard "Model M" \
   --mic "Headset" \
-  --delay 2.0
+  --delay 1.0
 Restart=on-failure
 RestartSec=5
 
@@ -229,7 +183,7 @@ RestartSec=5
 WantedBy=default.target
 ```
 
-Replace `YOUR_USERNAME` and adjust the keyboard/mic parameters.
+Replace `INSTALL_PATH` with the full path to where you installed magic-mute, and adjust the keyboard/mic parameters to match your devices.
 
 Enable and start:
 ```bash
@@ -250,23 +204,26 @@ journalctl --user -u magic-mute.service -f
 
 ## How It Works
 
-1. **Keyboard Monitoring**: Uses the `evdev` library to read events directly from the specified keyboard device at the kernel level (`/dev/input/eventX`)
+1. **Keyboard Discovery**: Searches for your keyboard by name across all input devices, so it works even if the device path changes between reboots
 
-2. **Microphone Control**: Uses `pulsectl` to interface with PipeWire/PulseAudio's API for muting/unmuting audio sources
+2. **Keyboard Monitoring**: Uses the `evdev` library to read events directly from the keyboard device at the kernel level (`/dev/input/eventX`)
 
-3. **Smart Timing**: When a key is pressed:
+3. **Microphone Control**: Uses `pulsectl` to interface with PipeWire/PulseAudio's API for muting/unmuting audio sources
+
+4. **Smart Timing**: When a key is pressed:
    - Immediately mutes the microphone
    - Starts/resets a countdown timer
    - When the timer expires (no keys pressed for N seconds), unmutes the microphone
 
-4. **Desktop Environment Agnostic**: Works on Wayland, X11, or even headless systems because it operates at the kernel device level
+5. **Desktop Environment Agnostic**: Works on Wayland, X11, or even headless systems because it operates at the kernel device level
 
 ## Troubleshooting
 
-### "Cannot access keyboard device"
-- Check the device path with `--list-keyboards`
+### "Cannot find keyboard device"
+- Check available keyboards with `--list-keyboards`
 - Verify permissions (see Device Permissions section)
-- Make sure you're using the correct `/dev/input/eventX` path
+- Make sure you're using a substring that uniquely identifies your keyboard
+- Try using a more specific part of the name (e.g., "04d9" instead of just "HID")
 
 ### "Cannot find microphone source"
 - Check available sources with `--list-mics`
@@ -279,9 +236,9 @@ journalctl --user -u magic-mute.service -f
 - Check that PipeWire/PulseAudio is controlling the correct device
 
 ### Wrong keyboard being monitored
-- Make sure you're specifying the correct device path
-- Use `--list-keyboards` to identify the right device
-- Check the "Name" and "Physical" fields to identify your mechanical keyboard
+- Use `--list-keyboards` to see all available keyboards
+- Make your search string more specific to match only your mechanical keyboard
+- Check the "Name" and "Physical" fields to identify your mechanical keyboard uniquely
 
 ## Technical Details
 
