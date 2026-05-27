@@ -1,0 +1,15 @@
+[Unit]
+Description=Magic Mute - Auto-mute mic while typing
+After=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=INSTALL_PATH/magic_mute.py \
+  --keyboard "YourKeyboardName" \
+  --mic "YourMicName" \
+  --delay 1.0
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
