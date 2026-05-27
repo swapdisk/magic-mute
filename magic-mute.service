@@ -1,0 +1,18 @@
+[Unit]
+Description=Magic Mute - Auto-mute mic while typing
+After=sound.target
+
+[Service]
+Type=simple
+User=bmader
+Group=input
+SupplementaryGroups=input
+ExecStart=/home/bmader/claude/magic-mute/magic_mute.py \
+  --keyboard /dev/input/eventX \
+  --mic "YourMicName" \
+  --delay 2.0
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
