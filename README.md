@@ -116,6 +116,17 @@ See what's happening in real-time:
 --list-mics               List all available microphone sources
 ```
 
+## Environment Variables
+
+Configuration can also be provided via environment variables. Command-line arguments take precedence.
+
+```
+MAGIC_MUTE_KEYBOARD        Keyboard device name (same as --keyboard)
+MAGIC_MUTE_MIC             Microphone source name (same as --mic)
+MAGIC_MUTE_DELAY           Unmute delay in seconds (same as --delay)
+MAGIC_MUTE_RETRY_INTERVAL  Retry interval in seconds (same as --retry-interval)
+```
+
 ## Device Permissions
 
 Your user needs read access to the keyboard device file. Typically, this is achieved with `input` group membership. For example:
@@ -142,7 +153,18 @@ The script should work under a regular user service on all desktop environments 
 
 ### Using systemd User Service
 
-Create `~/.config/systemd/user/magic-mute.service`:
+**Step 1:** Create a configuration file at `INSTALL_PATH/magic-mute.conf`:
+
+```bash
+MAGIC_MUTE_KEYBOARD="Model M"
+MAGIC_MUTE_MIC="Headset"
+MAGIC_MUTE_DELAY=1.0
+MAGIC_MUTE_RETRY_INTERVAL=60.0
+```
+
+Replace the values with your actual device names (use `--list-keyboards` and `--list-mics` to find them).
+
+**Step 2:** Create `~/.config/systemd/user/magic-mute.service`:
 
 ```ini
 [Unit]
@@ -151,10 +173,8 @@ After=pipewire.service
 
 [Service]
 Type=simple
-ExecStart=INSTALL_PATH/magic_mute.py \
-  --keyboard "Model M" \
-  --mic "Headset" \
-  --delay 1.0
+EnvironmentFile=-INSTALL_PATH/magic-mute.conf
+ExecStart=INSTALL_PATH/magic_mute.py
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT
@@ -163,24 +183,45 @@ KillSignal=SIGINT
 WantedBy=default.target
 ```
 
-Replace `INSTALL_PATH` with the full path to where you installed magic-mute, and adjust the keyboard/mic parameters to match your devices.
+Replace `INSTALL_PATH` with the full path to where you installed magic-mute.
 
-Enable and start:
+The `-` prefix before the path makes the config file optional - the service will work with command-line args if the file doesn't exist.
+
+**Step 3:** Enable and start:
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable magic-mute.service
 systemctl --user start magic-mute.service
 ```
 
-Check status:
+**Changing configuration:**
+
+To change keyboard or microphone settings, just edit `magic-mute.conf` and restart:
+```bash
+systemctl --user restart magic-mute.service
+```
+
+No need to run `daemon-reload` when only the config file changes!
+
+**Check status:**
 ```bash
 systemctl --user status magic-mute.service
 ```
 
-View logs:
+**View logs:**
 ```bash
 journalctl --user -u magic-mute.service -f
 ```
+
+**Alternative: Command-line arguments**
+
+You can also configure via command-line arguments in the service file instead of using a config file:
+
+```ini
+ExecStart=INSTALL_PATH/magic_mute.py --keyboard "Model M" --mic "Headset"
+```
+
+Command-line arguments take precedence over environment variables, so you can mix both approaches.
 
 ## How It Works
 

@@ -562,12 +562,18 @@ Examples:
         list_keyboards()
         return 0
 
-    # Validate required arguments
-    if not args.keyboard:
-        parser.error("--keyboard is required (use --list-keyboards to find your device)")
+    # Get configuration from args or environment variables (args take precedence)
+    keyboard = args.keyboard or os.environ.get('MAGIC_MUTE_KEYBOARD')
+    mic = args.mic or os.environ.get('MAGIC_MUTE_MIC')
+    delay = args.delay if args.delay != 1.0 else float(os.environ.get('MAGIC_MUTE_DELAY', '1.0'))
+    retry_interval = args.retry_interval if args.retry_interval != 60.0 else float(os.environ.get('MAGIC_MUTE_RETRY_INTERVAL', '60.0'))
 
-    if not args.mic:
-        parser.error("--mic is required (use --list-mics to find your microphone)")
+    # Validate required arguments
+    if not keyboard:
+        parser.error("--keyboard or MAGIC_MUTE_KEYBOARD environment variable is required (use --list-keyboards to find your device)")
+
+    if not mic:
+        parser.error("--mic or MAGIC_MUTE_MIC environment variable is required (use --list-mics to find your microphone)")
 
     # Check if we have input group for main operation
     if not has_input_group():
@@ -579,10 +585,10 @@ Examples:
 
     # Create and run magic mute
     magic_mute = MagicMute(
-        keyboard_name=args.keyboard,
-        mic_name=args.mic,
-        unmute_delay=args.delay,
-        retry_interval=args.retry_interval,
+        keyboard_name=keyboard,
+        mic_name=mic,
+        unmute_delay=delay,
+        retry_interval=retry_interval,
         no_retry=args.no_retry,
         verbose=args.verbose
     )

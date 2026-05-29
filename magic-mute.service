@@ -4,10 +4,8 @@ After=pipewire.service
 
 [Service]
 Type=simple
-ExecStart=INSTALL_PATH/magic_mute.py \
-  --keyboard "YourKeyboardName" \
-  --mic "YourMicName" \
-  --delay 1.0
+EnvironmentFile=-INSTALL_PATH/magic-mute.conf
+ExecStart=INSTALL_PATH/magic_mute.py
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT
