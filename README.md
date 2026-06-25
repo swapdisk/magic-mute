@@ -13,8 +13,10 @@ I love mechanical keyboards like my beloved IBM Model M, but they are loud and c
 ## The Solution
 
 Magic Mute monitors your keyboard device and automatically:
-- 🔇 **Mutes** your microphone as soon as you start typing
-- 🔊 **Unmutes** your microphone just after you stop typing
+- 🔇 **Auto-mutes** your microphone as soon as you start typing
+- 🔊 **Auto-unmutes** your microphone just after you stop typing
+- 🔘 **Manual toggle** mode via Scroll Lock key (or any key you choose)
+- 💡 **LED feedback** lights up Scroll Lock LED when muted
 
 Works directly with kernel input devices and PipeWire/PulseAudio, so it's desktop-environment agnostic and it even works with annoying Wayland.
 
@@ -23,7 +25,9 @@ Works directly with kernel input devices and PipeWire/PulseAudio, so it's deskto
 - 🎯 **Device-specific**: Monitor only your mechanical keyboard, not your laptop's built-in keyboard
 - 🎤 **Microphone-specific**: Mute only your headset mic, not your laptop's internal microphone
 - ⚡ **Low latency**: Instant muting when you press a key
-- 🔧 **Configurable**: Adjust the unmute delay to your preference
+- 🔘 **Manual toggle mode**: Press Scroll Lock to stay muted until you press it again
+- 💡 **Visual feedback**: Scroll Lock LED shows mute status at a glance
+- 🔧 **Configurable**: Adjust the unmute delay and toggle key to your preference
 - 🪶 **Lightweight**: Python daemon is simple and with minimal dependencies
 - ✨ **Graceful**: Automatically unmutes after you exit with Ctrl-C
 
@@ -93,6 +97,13 @@ See what's happening in real-time:
 ./magic_mute.py -k "Model M" -m "Headset" -v
 ```
 
+### With Custom Toggle Key
+
+Use a different key instead of Scroll Lock for manual toggle:
+```bash
+./magic_mute.py -k "Model M" -m "Headset" -t KEY_PAUSE
+```
+
 ### Complete Example
 
 ```bash
@@ -100,6 +111,7 @@ See what's happening in real-time:
   --keyboard "Model M" \
   --mic "USB Audio Device Mono" \
   --delay 2.5 \
+  --toggle-key KEY_SCROLLLOCK \
   --verbose
 ```
 
@@ -110,6 +122,7 @@ See what's happening in real-time:
 -m, --mic NAME            Microphone source name or substring (e.g., "Headset")
 -d, --delay SECONDS       Seconds to wait before unmuting (default: 1.0)
 -r, --retry-interval SEC  Seconds between retries when devices not found (default: 60.0)
+-t, --toggle-key KEY      Key to toggle manual mute mode (default: KEY_SCROLLLOCK)
 --no-retry                Exit if devices not found instead of retrying
 -v, --verbose             Enable verbose output
 --list-keyboards          List all available keyboard devices
@@ -125,7 +138,20 @@ MAGIC_MUTE_KEYBOARD        Keyboard device name (same as --keyboard)
 MAGIC_MUTE_MIC             Microphone source name (same as --mic)
 MAGIC_MUTE_DELAY           Unmute delay in seconds (same as --delay)
 MAGIC_MUTE_RETRY_INTERVAL  Retry interval in seconds (same as --retry-interval)
+MAGIC_MUTE_TOGGLE_KEY      Toggle key name (same as --toggle-key)
 ```
+
+## Manual Toggle Mode
+
+Press the toggle key (default: Scroll Lock) to enter **manual mute mode**:
+- Your microphone will mute and **stay muted** even when you stop typing
+- The Scroll Lock LED will light up to show you're muted
+- Press the toggle key again to exit manual mode and unmute
+- While in manual mode, typing won't trigger the auto-unmute timer
+
+This is perfect for when you need to stay muted for an extended period (listening to a presentation, etc.) but still want visual confirmation of your mute status.
+
+**Note**: LED feedback requires a keyboard with a Scroll Lock LED. If your keyboard doesn't have one, manual toggle mode still works - you just won't get the visual indicator.
 
 ## Device Permissions
 
@@ -160,6 +186,7 @@ MAGIC_MUTE_KEYBOARD="Model M"
 MAGIC_MUTE_MIC="Headset"
 MAGIC_MUTE_DELAY=1.0
 MAGIC_MUTE_RETRY_INTERVAL=60.0
+MAGIC_MUTE_TOGGLE_KEY=KEY_SCROLLLOCK
 ```
 
 Replace the values with your actual device names (use `--list-keyboards` and `--list-mics` to find them).
@@ -231,14 +258,18 @@ Command-line arguments take precedence over environment variables, so you can mi
 
 3. **Keyboard Monitoring**: Uses the `evdev` library to read events directly from the keyboard device at the kernel level (`/dev/input/eventX`)
 
-4. **Microphone Control**: Uses `pulsectl` to interface with PipeWire/PulseAudio's API for muting/unmuting audio sources
+4. **Manual Toggle Mode**: Detects toggle key (default Scroll Lock) to enter/exit manual mute mode. In manual mode, you stay muted until you press the toggle key again.
 
-5. **Smart Timing**: When a key is pressed:
+5. **LED Feedback**: Controls the keyboard's Scroll Lock LED to show mute status - on when muted, off when unmuted. Works for both auto-mute and manual mode.
+
+6. **Microphone Control**: Uses `pulsectl` to interface with PipeWire/PulseAudio's API for muting/unmuting audio sources
+
+7. **Smart Timing**: When a key is pressed (in auto mode):
    - Immediately mutes the microphone
    - Starts/resets a countdown timer
    - When the timer expires (no keys pressed for N seconds), unmutes the microphone
 
-6. **Desktop Environment Agnostic**: Works on Wayland, Xorg, or even headless systems because it operates at the kernel device level
+8. **Desktop Environment Agnostic**: Works on Wayland, Xorg, or even headless systems because it operates at the kernel device level
 
 ## Troubleshooting
 
@@ -265,6 +296,17 @@ Command-line arguments take precedence over environment variables, so you can mi
 - Use `--list-keyboards` to see all available keyboards
 - Make your search string more specific to match only your mechanical keyboard
 - Check the "Name" and "Physical" fields to identify your mechanical keyboard uniquely
+
+### LED not working
+- Check that your keyboard has a Scroll Lock LED (laptop keyboards often don't)
+- The script will detect and log if LED control is not supported
+- Manual toggle mode still works without LED feedback
+- If you need write access to the keyboard device, ensure your udev rule uses `MODE="0660"` not `MODE="0640"`
+
+### Toggle key not working
+- Make sure you're using a valid evdev key name (e.g., `KEY_SCROLLLOCK`, `KEY_PAUSE`, `KEY_NUMLOCK`)
+- Run with `--verbose` to see if the key press is detected
+- Check that the key exists on your keyboard with `evtest` or similar tools
 
 ## License
 

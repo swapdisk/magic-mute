@@ -36,6 +36,7 @@ class MagicMute:
         unmute_delay: float = 1.0,
         retry_interval: float = 60.0,
         no_retry: bool = False,
+        toggle_key: str = "KEY_SCROLLLOCK",
         verbose: bool = False,
     ):
         self.keyboard_name = keyboard_name
@@ -43,6 +44,7 @@ class MagicMute:
         self.unmute_delay = unmute_delay
         self.retry_interval = retry_interval
         self.no_retry = no_retry
+        self.toggle_key = toggle_key
         self.verbose = verbose
 
         self.device: Optional[evdev.InputDevice] = None
@@ -51,10 +53,12 @@ class MagicMute:
         self.mic_index: Optional[int] = None  # PulseAudio source index, not list position
 
         self.is_muted = False
+        self.manual_mute_mode = False  # True when manually toggled on
         self.unmute_timer: Optional[threading.Timer] = None
         self.timer_lock = threading.Lock()
 
         self.devices_found = False
+        self.led_supported = False  # Will be set during setup
 
     def log(self, message: str, force: bool = False):
         """Print message if verbose mode is enabled or force is True"""
@@ -168,6 +172,9 @@ class MagicMute:
                 print("Make sure you have permission to read it.")
             return False
 
+        # Check if LED control is supported
+        self._check_led_support()
+
         # Setup PulseAudio/PipeWire connection (fresh connection each time)
         try:
             self.pulse = pulsectl.Pulse('magic-mute')
@@ -229,12 +236,44 @@ class MagicMute:
                 print(f"    Muted: {bool(source.mute)}")
                 print()
 
+    def _check_led_support(self):
+        """Check if keyboard supports Scroll Lock LED"""
+        try:
+            caps = self.device.capabilities()
+            if evdev.ecodes.EV_LED in caps:
+                leds = caps[evdev.ecodes.EV_LED]
+                if evdev.ecodes.LED_SCROLLL in leds:
+                    self.led_supported = True
+                    self.log("Scroll Lock LED supported", force=True)
+                    return
+            self.log("Scroll Lock LED not supported on this keyboard", force=True)
+        except Exception as e:
+            self.log(f"Could not check LED support: {e}")
+            self.led_supported = False
+
+    def _set_led(self, state: bool):
+        """Set Scroll Lock LED state (True=on, False=off)"""
+        if not self.led_supported:
+            return
+
+        try:
+            self.device.set_led(evdev.ecodes.LED_SCROLLL, 1 if state else 0)
+        except Exception as e:
+            self.log(f"Failed to set LED: {e}")
+            # Disable LED control if it fails
+            self.led_supported = False
+
+    def _update_led(self):
+        """Update LED to reflect current mute state"""
+        self._set_led(self.is_muted)
+
     def mute_mic(self) -> bool:
         """Mute the microphone. Returns False if operation failed (device gone)."""
         if not self.is_muted:
             try:
                 self.pulse.source_mute(self.mic_index, 1)
                 self.is_muted = True
+                self._update_led()
                 self.log("🔇 Microphone MUTED")
                 return True
             except Exception as e:
@@ -248,6 +287,7 @@ class MagicMute:
             try:
                 self.pulse.source_mute(self.mic_index, 0)
                 self.is_muted = False
+                self._update_led()
                 self.log("🔊 Microphone UNMUTED")
                 return True
             except Exception as e:
@@ -255,8 +295,30 @@ class MagicMute:
                 return False
         return True
 
+    def toggle_manual_mute(self):
+        """Toggle manual mute mode on/off"""
+        if self.manual_mute_mode:
+            # Exit manual mode and unmute
+            self.manual_mute_mode = False
+            self.unmute_mic()
+            self.log("Manual mute mode OFF", force=True)
+        else:
+            # Enter manual mode and mute
+            self.manual_mute_mode = True
+            # Cancel any pending auto-unmute
+            with self.timer_lock:
+                if self.unmute_timer is not None:
+                    self.unmute_timer.cancel()
+                    self.unmute_timer = None
+            self.mute_mic()
+            self.log("Manual mute mode ON", force=True)
+
     def schedule_unmute(self):
-        """Schedule microphone unmute after delay"""
+        """Schedule microphone unmute after delay (unless in manual mode)"""
+        # Don't auto-unmute when in manual mode
+        if self.manual_mute_mode:
+            return
+
         with self.timer_lock:
             # Cancel existing timer if any
             if self.unmute_timer is not None:
@@ -274,15 +336,31 @@ class MagicMute:
         print()
 
         try:
+            # Get toggle key code
+            toggle_keycode = getattr(evdev.ecodes, self.toggle_key, None)
+            if toggle_keycode is None:
+                self.log(f"Warning: Unknown toggle key '{self.toggle_key}', toggle feature disabled", force=True)
+
             # Grab the device to receive all events
             for event in self.device.read_loop():
                 # Only process key events (not SYN, MSC, etc.)
                 if event.type == evdev.ecodes.EV_KEY:
                     key_event = evdev.categorize(event)
 
-                    # Only react to key down and repeat events (not key up)
+                    # Check if this is the toggle key (only on key down, not repeat)
+                    if key_event.keystate == evdev.KeyEvent.key_down:
+                        if toggle_keycode and event.code == toggle_keycode:
+                            self.log(f"Toggle key pressed: {key_event.keycode}")
+                            self.toggle_manual_mute()
+                            continue
+
+                    # React to key down and repeat events (not key up)
                     if key_event.keystate in (evdev.KeyEvent.key_down, evdev.KeyEvent.key_hold):
                         self.log(f"Key pressed: {key_event.keycode}")
+
+                        # Don't auto-mute if in manual mode
+                        if self.manual_mute_mode:
+                            continue
 
                         # Mute microphone immediately
                         if not self.mute_mic():
@@ -362,9 +440,16 @@ class MagicMute:
             if self.unmute_timer is not None:
                 self.unmute_timer.cancel()
 
+        # Exit manual mode if active
+        if self.manual_mute_mode:
+            self.manual_mute_mode = False
+
         # Ensure microphone is unmuted on exit
         if self.is_muted:
             self.unmute_mic()
+
+        # Turn off LED
+        self._set_led(False)
 
         # Close PulseAudio connection
         if self.pulse is not None:
@@ -538,6 +623,13 @@ Examples:
     )
 
     parser.add_argument(
+        '-t', '--toggle-key',
+        type=str,
+        default='KEY_SCROLLLOCK',
+        help='Key to toggle manual mute mode (default: KEY_SCROLLLOCK)'
+    )
+
+    parser.add_argument(
         '-v', '--verbose',
         action='store_true',
         help='Enable verbose output'
@@ -567,6 +659,7 @@ Examples:
     mic = args.mic or os.environ.get('MAGIC_MUTE_MIC')
     delay = args.delay if args.delay != 1.0 else float(os.environ.get('MAGIC_MUTE_DELAY', '1.0'))
     retry_interval = args.retry_interval if args.retry_interval != 60.0 else float(os.environ.get('MAGIC_MUTE_RETRY_INTERVAL', '60.0'))
+    toggle_key = args.toggle_key if args.toggle_key != 'KEY_SCROLLLOCK' else os.environ.get('MAGIC_MUTE_TOGGLE_KEY', 'KEY_SCROLLLOCK')
 
     # Validate required arguments
     if not keyboard:
@@ -590,6 +683,7 @@ Examples:
         unmute_delay=delay,
         retry_interval=retry_interval,
         no_retry=args.no_retry,
+        toggle_key=toggle_key,
         verbose=args.verbose
     )
 
