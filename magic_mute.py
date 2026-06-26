@@ -301,7 +301,7 @@ class MagicMute:
             # Exit manual mode and unmute
             self.manual_mute_mode = False
             self.unmute_mic()
-            self.log("Manual mute mode OFF", force=True)
+            self.log("Manual mute mode OFF")
         else:
             # Enter manual mode and mute
             self.manual_mute_mode = True
@@ -311,7 +311,7 @@ class MagicMute:
                     self.unmute_timer.cancel()
                     self.unmute_timer = None
             self.mute_mic()
-            self.log("Manual mute mode ON", force=True)
+            self.log("Manual mute mode ON")
 
     def schedule_unmute(self):
         """Schedule microphone unmute after delay (unless in manual mode)"""
