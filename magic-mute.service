@@ -4,6 +4,7 @@ After=pipewire.service
 
 [Service]
 Type=simple
+Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-INSTALL_PATH/magic-mute.conf
 ExecStart=INSTALL_PATH/magic_mute.py
 Restart=on-failure
