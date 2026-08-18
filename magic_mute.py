@@ -37,6 +37,7 @@ class MagicMute:
         retry_interval: float = 60.0,
         no_retry: bool = False,
         toggle_key: str = "KEY_SCROLLLOCK",
+        ptt_key: str = "KEY_LEFTCTRL",
         verbose: bool = False,
     ):
         self.keyboard_name = keyboard_name
@@ -45,6 +46,7 @@ class MagicMute:
         self.retry_interval = retry_interval
         self.no_retry = no_retry
         self.toggle_key = toggle_key
+        self.ptt_key = ptt_key
         self.verbose = verbose
 
         self.device: Optional[evdev.InputDevice] = None
@@ -54,6 +56,7 @@ class MagicMute:
 
         self.is_muted = False
         self.manual_mute_mode = False  # True when manually toggled on
+        self.ptt_active = False        # True while PTT key is held
         self.unmute_timer: Optional[threading.Timer] = None
         self.timer_lock = threading.Lock()
 
@@ -295,6 +298,32 @@ class MagicMute:
                 return False
         return True
 
+    def ptt_press(self):
+        """PTT key pressed - temporarily unmute while in manual mute mode"""
+        if not self.manual_mute_mode:
+            return
+        self.ptt_active = True
+        try:
+            self.pulse.source_mute(self.mic_index, 0)
+            self._set_led(False)
+            self.log("PTT active - mic open")
+        except Exception as e:
+            self.log(f"Error unmuting for PTT: {e}", force=True)
+            self.ptt_active = False
+
+    def ptt_release(self):
+        """PTT key released - re-mute if we were in PTT mode"""
+        if not self.ptt_active:
+            return
+        self.ptt_active = False
+        if self.manual_mute_mode:
+            try:
+                self.pulse.source_mute(self.mic_index, 1)
+                self._set_led(True)
+                self.log("PTT released - mic muted")
+            except Exception as e:
+                self.log(f"Error re-muting after PTT: {e}", force=True)
+
     def toggle_manual_mute(self):
         """Toggle manual mute mode on/off"""
         if self.manual_mute_mode:
@@ -336,22 +365,48 @@ class MagicMute:
         print()
 
         try:
-            # Get toggle key code
+            # Resolve key codes
             toggle_keycode = getattr(evdev.ecodes, self.toggle_key, None)
             if toggle_keycode is None:
                 self.log(f"Warning: Unknown toggle key '{self.toggle_key}', toggle feature disabled", force=True)
 
+            ptt_keycode = getattr(evdev.ecodes, self.ptt_key, None)
+            if ptt_keycode is None:
+                self.log(f"Warning: Unknown PTT key '{self.ptt_key}', PTT feature disabled", force=True)
+
             # Grab the device to receive all events
             for event in self.device.read_loop():
+                # If Scroll Lock LED was turned off by the keyboard driver
+                # (e.g. Caps Lock or Num Lock toggled from any keyboard),
+                # re-assert our desired LED state.
+                if (event.type == evdev.ecodes.EV_LED
+                        and event.code == evdev.ecodes.LED_SCROLLL
+                        and event.value == 0
+                        and self.is_muted
+                        and not self.ptt_active):
+                    self.log("Scroll Lock LED reset detected, re-asserting mute LED")
+                    self._update_led()
+
                 # Only process key events (not SYN, MSC, etc.)
                 if event.type == evdev.ecodes.EV_KEY:
                     key_event = evdev.categorize(event)
 
-                    # Check if this is the toggle key (only on key down, not repeat)
+                    # Handle toggle key (key down only, not repeat)
                     if key_event.keystate == evdev.KeyEvent.key_down:
                         if toggle_keycode and event.code == toggle_keycode:
                             self.log(f"Toggle key pressed: {key_event.keycode}")
                             self.toggle_manual_mute()
+                            continue
+
+                    # Handle PTT key down and up
+                    if ptt_keycode and event.code == ptt_keycode:
+                        if key_event.keystate == evdev.KeyEvent.key_down:
+                            self.ptt_press()
+                        elif key_event.keystate == evdev.KeyEvent.key_up:
+                            self.ptt_release()
+                        # In manual mode, PTT is fully handled above; in auto mode,
+                        # fall through so the key press triggers auto-mute as normal
+                        if self.manual_mute_mode:
                             continue
 
                     # React to key down and repeat events (not key up)
@@ -440,9 +495,9 @@ class MagicMute:
             if self.unmute_timer is not None:
                 self.unmute_timer.cancel()
 
-        # Exit manual mode if active
-        if self.manual_mute_mode:
-            self.manual_mute_mode = False
+        # Exit PTT and manual mode if active
+        self.ptt_active = False
+        self.manual_mute_mode = False
 
         # Ensure microphone is unmuted on exit
         if self.is_muted:
@@ -630,6 +685,13 @@ Examples:
     )
 
     parser.add_argument(
+        '-p', '--ptt-key',
+        type=str,
+        default='KEY_LEFTCTRL',
+        help='Key for push-to-talk while in manual mute mode (default: KEY_LEFTCTRL)'
+    )
+
+    parser.add_argument(
         '-v', '--verbose',
         action='store_true',
         help='Enable verbose output'
@@ -660,6 +722,7 @@ Examples:
     delay = args.delay if args.delay != 1.0 else float(os.environ.get('MAGIC_MUTE_DELAY', '1.0'))
     retry_interval = args.retry_interval if args.retry_interval != 60.0 else float(os.environ.get('MAGIC_MUTE_RETRY_INTERVAL', '60.0'))
     toggle_key = args.toggle_key if args.toggle_key != 'KEY_SCROLLLOCK' else os.environ.get('MAGIC_MUTE_TOGGLE_KEY', 'KEY_SCROLLLOCK')
+    ptt_key = args.ptt_key if args.ptt_key != 'KEY_LEFTCTRL' else os.environ.get('MAGIC_MUTE_PTT_KEY', 'KEY_LEFTCTRL')
 
     # Validate required arguments
     if not keyboard:
@@ -684,6 +747,7 @@ Examples:
         retry_interval=retry_interval,
         no_retry=args.no_retry,
         toggle_key=toggle_key,
+        ptt_key=ptt_key,
         verbose=args.verbose
     )
 

@@ -26,6 +26,7 @@ Works directly with kernel input devices and PipeWire/PulseAudio, so it's deskto
 - 🎤 **Microphone-specific**: Mute only your headset mic, not your laptop's internal microphone
 - ⚡ **Low latency**: Instant muting when you press a key
 - 🔘 **Manual toggle mode**: Press Scroll Lock to stay muted until you press it again
+- 🎙️ **Push-to-talk**: Hold Left Ctrl while in manual mute mode to temporarily unmute
 - 💡 **Visual feedback**: Scroll Lock LED shows mute status at a glance
 - 🔧 **Configurable**: Adjust the unmute delay and toggle key to your preference
 - 🪶 **Lightweight**: Python daemon is simple and with minimal dependencies
@@ -123,6 +124,7 @@ Use a different key instead of Scroll Lock for manual toggle:
 -d, --delay SECONDS       Seconds to wait before unmuting (default: 1.0)
 -r, --retry-interval SEC  Seconds between retries when devices not found (default: 60.0)
 -t, --toggle-key KEY      Key to toggle manual mute mode (default: KEY_SCROLLLOCK)
+-p, --ptt-key KEY         Key for push-to-talk in manual mute mode (default: KEY_LEFTCTRL)
 --no-retry                Exit if devices not found instead of retrying
 -v, --verbose             Enable verbose output
 --list-keyboards          List all available keyboard devices
@@ -139,6 +141,7 @@ MAGIC_MUTE_MIC             Microphone source name (same as --mic)
 MAGIC_MUTE_DELAY           Unmute delay in seconds (same as --delay)
 MAGIC_MUTE_RETRY_INTERVAL  Retry interval in seconds (same as --retry-interval)
 MAGIC_MUTE_TOGGLE_KEY      Toggle key name (same as --toggle-key)
+MAGIC_MUTE_PTT_KEY         Push-to-talk key name (same as --ptt-key)
 ```
 
 ## Manual Toggle Mode
@@ -151,7 +154,15 @@ Press the toggle key (default: Scroll Lock) to enter **manual mute mode**:
 
 This is perfect for when you need to stay muted for an extended period (listening to a presentation, etc.) but still want visual confirmation of your mute status.
 
-**Note**: LED feedback requires a keyboard with a Scroll Lock LED. If your keyboard doesn't have one, manual toggle mode still works - you just won't get the visual indicator.
+## Push-to-Talk
+
+While in manual mute mode, hold the PTT key (default: Left Ctrl) to **temporarily unmute**:
+- Hold PTT key → mic opens, LED turns off
+- Release PTT key → mic mutes again, LED turns back on
+
+PTT only works while in manual mute mode. In auto-mute mode, the PTT key is treated as a regular key and triggers auto-muting as normal.
+
+**Note**: LED feedback requires a keyboard with a Scroll Lock LED. If your keyboard doesn't have one, manual toggle and PTT modes still work - you just won't get the visual indicator.
 
 ## Device Permissions
 
@@ -187,6 +198,7 @@ MAGIC_MUTE_MIC="Headset"
 MAGIC_MUTE_DELAY=1.0
 MAGIC_MUTE_RETRY_INTERVAL=60.0
 MAGIC_MUTE_TOGGLE_KEY=KEY_SCROLLLOCK
+MAGIC_MUTE_PTT_KEY=KEY_LEFTCTRL
 ```
 
 Replace the values with your actual device names (use `--list-keyboards` and `--list-mics` to find them).
